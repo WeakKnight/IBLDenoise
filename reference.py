@@ -16,17 +16,33 @@ device = spy.create_device(include_paths=[
     pathlib.Path(__file__).parent.absolute(),
 ])
 
-probe_tex = device.create_texture(width= img_w, height = img_h, format = sgl.Format.rgba32_float,
+radiance_map = device.create_texture(width= img_w, height = img_h, format = sgl.Format.rgba32_float,
                                   usage= sgl.ResourceUsage.shader_resource | sgl.ResourceUsage.unordered_access,
                                   data = probe_data)
 
-output_tex = device.create_texture(width= img_w, height = img_h, format = sgl.Format.rgba8_unorm,
-                                  usage= sgl.ResourceUsage.shader_resource | sgl.ResourceUsage.unordered_access)
+module_ibl = spy.Module.load_from_file(device, "IBL.slang")
 
-module = spy.Module.load_from_file(device, "reference.slang")
-module.aces_filmic(probe_tex, output_tex)
+mip_count = 5
+mip_level = 1
+linear_roughness = mip_level / float(mip_count - 1)
+alpha = linear_roughness * linear_roughness
+prefiltered_map_w = img_w >> mip_level
+prefiltered_map_h = img_h >> mip_level
 
-output_bitmap = output_tex.to_numpy()
-plt.imshow(output_bitmap)
+dispatch_dimesnion = np.zeros((prefiltered_map_w, prefiltered_map_h, 4), dtype=np.float32)
+thread_index = spy.grid(shape=(prefiltered_map_w, prefiltered_map_h))
+
+prefiltered_map_w_tensor = np.full((prefiltered_map_w, prefiltered_map_h), prefiltered_map_w, dtype=np.uint32)
+prefiltered_map_h_tensor = np.full((prefiltered_map_w, prefiltered_map_h), prefiltered_map_h, dtype=np.uint32)
+alpha_tensor = np.full((prefiltered_map_w, prefiltered_map_h), alpha, dtype=np.float32)
+mip_level_tensor = np.full((prefiltered_map_w, prefiltered_map_h), mip_level, dtype=np.int32)
+
+linear_sampler = device.create_sampler()
+
+prefiltered_map = module_ibl.PrefilterEnvmap(thread_index, 
+                                             alpha_tensor, mip_level_tensor, 
+                                             radiance_map, 
+                                             _result=dispatch_dimesnion)
+plt.imshow(prefiltered_map)
 plt.show()
 
